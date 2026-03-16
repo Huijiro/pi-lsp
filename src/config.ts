@@ -160,6 +160,44 @@ export const LSP_CONFIGS: LspServerConfig[] = [
     initializationOptions: { provideFormatter: true },
   },
 
+  // Tailwind CSS
+  {
+    name: "tailwindcss",
+    command: "tailwindcss-language-server",
+    args: ["--stdio"],
+    filePatterns: [
+      /\.(html|css|scss|less)$/,
+      /\.(js|jsx|ts|tsx|mjs|cjs|mts|cts)$/,
+      /\.(vue|svelte|astro)$/,
+    ],
+    condition: (root) =>
+      hasMarker(
+        root,
+        "tailwind.config.js",
+        "tailwind.config.cjs",
+        "tailwind.config.mjs",
+        "tailwind.config.ts",
+        "postcss.config.js",
+        "postcss.config.cjs",
+        "postcss.config.mjs",
+        "postcss.config.ts",
+      ),
+    settings: {
+      tailwindCSS: {
+        validate: true,
+        lint: {
+          cssConflict: "warning",
+          invalidApply: "error",
+          invalidScreen: "error",
+          invalidVariant: "error",
+          invalidConfigPath: "error",
+          invalidTailwindDirective: "error",
+          recommendedVariantOrder: "warning",
+        },
+      },
+    },
+  },
+
   // Biome
   {
     name: "biome",

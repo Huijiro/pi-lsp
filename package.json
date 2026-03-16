@@ -1,0 +1,35 @@
+{
+  "name": "pi-lsp",
+  "description": "PI extension that provides LSP diagnostics inline with file reads and as a standalone tool. Spawns LSP servers lazily with configurable activation conditions.",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "scripts": {
+    "check": "biome check && tsc --noEmit",
+    "format": "biome check --write",
+    "lint": "biome check"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "^0.57.0",
+    "@mariozechner/pi-coding-agent": "^0.57.0",
+    "@mariozechner/pi-tui": "^0.57.0",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.7",
+    "@mariozechner/pi-ai": "^0.57.0",
+    "@mariozechner/pi-coding-agent": "^0.57.0",
+    "@mariozechner/pi-tui": "^0.57.0",
+    "@sinclair/typebox": "^0.34.0",
+    "typescript": "^5.9.0"
+  }
+}

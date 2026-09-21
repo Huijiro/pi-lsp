@@ -9,9 +9,8 @@
  * only when the workspace condition is met (e.g. tsconfig.json exists).
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { isReadToolResult, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -194,7 +193,7 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
 
   pi.on("tool_result", async (event, ctx) => {
     if (!uiCtx) uiCtx = ctx.ui;
-    if (event.toolName !== "read") return;
+    if (!isReadToolResult(event)) return;
 
     const input = event.input as { path?: string };
     if (!input.path) return;

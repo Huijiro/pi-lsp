@@ -1,6 +1,6 @@
 # pi-lsp
 
-A [pi](https://github.com/badlogic/pi) extension that gives the AI agent access to real-time LSP diagnostics.
+A [Pi](https://github.com/earendil-works/pi) extension that gives the AI agent access to real-time LSP diagnostics.
 
 ## Features
 
@@ -32,18 +32,10 @@ A [pi](https://github.com/badlogic/pi) extension that gives the AI agent access 
 ## Installation
 
 ```bash
-pi install https://github.com/Huijiro/pi-lsp
+pi install git:github.com/Huijiro/pi-lsp
 ```
 
-Or add to your `~/.pi/agent/settings.json`:
-
-```json
-{
-  "packages": [
-    "https://github.com/Huijiro/pi-lsp"
-  ]
-}
-```
+Use `pi install -l git:github.com/Huijiro/pi-lsp` to install it for the current project only.
 
 ### Prerequisites
 

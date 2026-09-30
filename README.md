@@ -5,11 +5,11 @@ A [Pi](https://github.com/earendil-works/pi) extension that gives the AI agent a
 ## Features
 
 - **Auto-append on read** — Diagnostics are automatically appended when pi reads a file with issues, so the agent sees errors and warnings in context
-- **Standalone `diagnostics` tool** — The LLM can query diagnostics for any file on demand, useful after edits or to inspect a file's health
-- **Lazy & eager startup** — LSP servers matching the cwd spawn at session start; others spawn lazily on first relevant file read
+- **Standalone `diagnostics` tool** — The LLM can query diagnostics for any file on demand, useful after edits or to inspect a file's health. It returns structured data for Pi codemode scripts.
+- **Lazy startup** — An LSP server starts only when Pi first reads or checks a matching file
 - **Nvim-style activation** — Each LSP has a `condition` function that checks for root markers (e.g., `tsconfig.json`, `Cargo.toml`) before spawning, just like Neovim's LSP config
 - **Command availability check** — Servers are silently skipped if the command isn't installed
-- **Multi-LSP support** — Multiple LSPs can report diagnostics for the same file (e.g., TypeScript + Biome)
+- **Multi-LSP support** — Multiple LSPs report diagnostics for the same file in parallel (e.g., TypeScript + Biome)
 - **Push & pull diagnostics** — Supports both `publishDiagnostics` notifications and `textDocument/diagnostic` requests
 - **Footer status** — Shows active LSP servers in the pi footer
 - **`/lsp` command** — Lists all active LSP servers

@@ -9,19 +9,54 @@
  * only when the workspace condition is met (e.g. tsconfig.json exists).
  */
 
-import { isReadToolResult, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { resolve, dirname } from "node:path";
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { findConfigsForFile, LSP_CONFIGS, type LspServerConfig } from "./config.js";
-import { LspClient, formatDiagnostics, type Diagnostic } from "./lsp-client.js";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { type ExtensionAPI, isReadToolResult } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { findConfigsForFile, type LspServerConfig } from "./config.js";
+import { type Diagnostic, formatDiagnostics, LspClient } from "./lsp-client.js";
+
+const DiagnosticSchema = Type.Object({
+  range: Type.Object({
+    start: Type.Object({ line: Type.Number(), character: Type.Number() }),
+    end: Type.Object({ line: Type.Number(), character: Type.Number() }),
+  }),
+  severity: Type.Union([Type.Number(), Type.Null()]),
+  message: Type.String(),
+  source: Type.Union([Type.String(), Type.Null()]),
+  code: Type.Union([Type.Number(), Type.String(), Type.Null()]),
+});
+
+const DiagnosticsOutputSchema = Type.Object({
+  path: Type.String(),
+  diagnostics: Type.Array(DiagnosticSchema),
+  errors: Type.Number(),
+  warnings: Type.Number(),
+});
+
+function createDiagnosticsOutput(path: string, diagnostics: Diagnostic[]) {
+  return {
+    path,
+    diagnostics: diagnostics.map((diagnostic) => ({
+      range: diagnostic.range,
+      severity: diagnostic.severity ?? null,
+      message: diagnostic.message,
+      source: diagnostic.source ?? null,
+      code: diagnostic.code ?? null,
+    })),
+    errors: diagnostics.filter((diagnostic) => diagnostic.severity === 1).length,
+    warnings: diagnostics.filter((diagnostic) => diagnostic.severity === 2).length,
+  };
+}
 
 export default function lspDiagnostics(pi: ExtensionAPI) {
   // Cache: workspace root → LspClient (one server per root per config)
   const clients = new Map<string, LspClient>();
   // Cache: config name per client key (for status display)
   const clientNames = new Map<string, string>();
+  // Prevent parallel diagnostics calls from starting the same server twice.
+  const startingClients = new Map<string, Promise<LspClient | null>>();
   // Cache: workspace root → condition result (avoid re-checking fs)
   const conditionCache = new Map<string, boolean>();
   // UI context reference for status updates
@@ -37,7 +72,6 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
     }
     const names = [...new Set(clientNames.values())];
     let text = `LSP: ${names[0]}`;
-    let shown = 1;
     for (let i = 1; i < names.length; i++) {
       const remaining = names.length - i;
       const suffix = `, and ${remaining} more`;
@@ -47,19 +81,12 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
         break;
       }
       text = next;
-      shown++;
     }
     uiCtx.setStatus("lsp-diagnostics", text);
   }
 
   pi.on("session_start", async (_event, ctx) => {
     uiCtx = ctx.ui;
-
-    // Eagerly spawn LSP servers whose conditions match the cwd
-    await Promise.all(
-      LSP_CONFIGS.map((config) => getClientForConfig(config, ctx.cwd)),
-    );
-
     updateStatus();
   });
 
@@ -72,8 +99,35 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
       "tsconfig.json",
       "jsconfig.json",
       "package.json",
-      "Cargo.toml",
       "pyproject.toml",
+      "setup.py",
+      "setup.cfg",
+      "requirements.txt",
+      "Pipfile",
+      "pyrightconfig.json",
+      "go.mod",
+      "go.work",
+      "compile_commands.json",
+      "compile_flags.txt",
+      ".clangd",
+      ".clang-tidy",
+      "CMakeLists.txt",
+      "Makefile",
+      "svelte.config.js",
+      "svelte.config.ts",
+      "tailwind.config.js",
+      "tailwind.config.cjs",
+      "tailwind.config.mjs",
+      "tailwind.config.ts",
+      "biome.json",
+      "biome.jsonc",
+      ".luarc.json",
+      ".luarc.jsonc",
+      ".luacheckrc",
+      ".stylua.toml",
+      "stylua.toml",
+      "selene.toml",
+      "selene.yml",
       ".git",
     ];
     let dir = dirname(resolve(filePath));
@@ -95,7 +149,8 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
   const commandCache = new Map<string, boolean>();
 
   function isCommandInstalled(command: string): boolean {
-    if (commandCache.has(command)) return commandCache.get(command)!;
+    const cached = commandCache.get(command);
+    if (cached !== undefined) return cached;
     try {
       execFileSync("which", [command], { stdio: "ignore" });
       commandCache.set(command, true);
@@ -126,32 +181,36 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
       if (!shouldActivate) return null;
     }
 
-    if (clients.has(key)) return clients.get(key)!;
+    const existingClient = clients.get(key);
+    if (existingClient) return existingClient;
+    const startingClient = startingClients.get(key);
+    if (startingClient) return startingClient;
 
-    const client = new LspClient(config, workspaceRoot);
-    try {
-      await client.start();
-      clients.set(key, client);
-      clientNames.set(key, config.name);
-      updateStatus();
-      return client;
-    } catch (err) {
-      console.error(
-        `[lsp-diagnostics] Failed to start ${config.name}:`,
-        (err as Error).message,
-      );
-      conditionCache.set(key, false);
-      return null;
-    }
+    const startPromise = (async (): Promise<LspClient | null> => {
+      const client = new LspClient(config, workspaceRoot);
+      try {
+        await client.start();
+        clients.set(key, client);
+        clientNames.set(key, config.name);
+        updateStatus();
+        return client;
+      } catch (err) {
+        console.error(`[lsp-diagnostics] Failed to start ${config.name}:`, (err as Error).message);
+        conditionCache.set(key, false);
+        return null;
+      } finally {
+        startingClients.delete(key);
+      }
+    })();
+
+    startingClients.set(key, startPromise);
+    return startPromise;
   }
 
   /**
    * Get all matching LSP clients for a file.
    */
-  async function getClientsForFile(
-    filePath: string,
-    cwd: string,
-  ): Promise<LspClient[]> {
+  async function getClientsForFile(filePath: string, cwd: string): Promise<LspClient[]> {
     const configs = findConfigsForFile(filePath);
     if (configs.length === 0) return [];
 
@@ -165,28 +224,27 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
   /**
    * Get diagnostics for a file path from all matching LSP servers.
    */
-  async function getDiagnostics(
-    filePath: string,
-    cwd: string,
-  ): Promise<string> {
+  async function getDiagnostics(filePath: string, cwd: string): Promise<Diagnostic[]> {
     const absPath = resolve(cwd, filePath);
     const lspClients = await getClientsForFile(absPath, cwd);
-    if (lspClients.length === 0) return "";
+    if (lspClients.length === 0) return [];
 
+    const results = await Promise.allSettled(
+      lspClients.map((client) => client.openFileAndGetDiagnostics(absPath)),
+    );
     const allDiagnostics: Diagnostic[] = [];
-    for (const client of lspClients) {
-      try {
-        const diagnostics = await client.openFileAndGetDiagnostics(absPath);
-        allDiagnostics.push(...diagnostics);
-      } catch (err) {
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        allDiagnostics.push(...result.value);
+      } else {
         console.error(
-          `[lsp-diagnostics] Error getting diagnostics:`,
-          (err as Error).message,
+          "[lsp-diagnostics] Error getting diagnostics:",
+          result.reason instanceof Error ? result.reason.message : String(result.reason),
         );
       }
     }
 
-    return formatDiagnostics(filePath, allDiagnostics);
+    return allDiagnostics;
   }
 
   // --- Hook: Append diagnostics to read tool results ---
@@ -202,8 +260,9 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
     const textContent = event.content?.find((c) => c.type === "text");
     if (!textContent) return;
 
-    const diagnosticText = await getDiagnostics(input.path, ctx.cwd);
-    if (!diagnosticText) return;
+    const diagnostics = await getDiagnostics(input.path, ctx.cwd);
+    if (diagnostics.length === 0) return;
+    const diagnosticText = formatDiagnostics(diagnostics);
 
     // Append diagnostics to the existing text content
     const updatedContent = event.content.map((c) => {
@@ -223,14 +282,26 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
     label: "LSP Diagnostics",
     description:
       "Get LSP diagnostics (errors, warnings) for a file. Use after editing to check for issues, or to inspect a file's health.",
+    namespace: {
+      name: "lsp",
+      description: "Language-server diagnostics",
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     parameters: Type.Object({
       path: Type.String({ description: "File path to get diagnostics for" }),
     }),
+    outputSchema: DiagnosticsOutputSchema,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const diagnosticText = await getDiagnostics(params.path, ctx.cwd);
+      const diagnostics = await getDiagnostics(params.path, ctx.cwd);
+      const output = createDiagnosticsOutput(params.path, diagnostics);
 
-      if (!diagnosticText) {
+      if (diagnostics.length === 0) {
         return {
           content: [
             {
@@ -238,13 +309,15 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
               text: `No diagnostics available for ${params.path} (no matching LSP server or no issues found)`,
             },
           ],
-          details: { path: params.path, count: 0 },
+          details: output,
+          structuredContent: output,
         };
       }
 
       return {
-        content: [{ type: "text" as const, text: diagnosticText.trim() }],
-        details: { path: params.path },
+        content: [{ type: "text" as const, text: formatDiagnostics(diagnostics).trim() }],
+        details: output,
+        structuredContent: output,
       };
     },
   });
@@ -266,13 +339,12 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
   // --- Cleanup: Shut down all LSP servers on session end ---
 
   pi.on("session_shutdown", async () => {
-    const disposePromises = Array.from(clients.values()).map((c) =>
-      c.dispose(),
-    );
+    const disposePromises = Array.from(clients.values()).map((c) => c.dispose());
     await Promise.allSettled(disposePromises);
     clients.clear();
     clientNames.clear();
     conditionCache.clear();
+    startingClients.clear();
     updateStatus();
   });
 }

@@ -1,7 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { type LspServerConfig } from "./config.js";
+import type { LspServerConfig } from "./config.js";
 
 // LSP types (minimal subset)
 export interface Diagnostic {
@@ -30,6 +30,31 @@ const SEVERITY_MAP: Record<number, string> = {
   3: "info",
   4: "hint",
 };
+
+export function getLanguageId(filePath: string): string {
+  if (/\.tsx$/.test(filePath)) return "typescriptreact";
+  if (/\.(ts|mts|cts)$/.test(filePath)) return "typescript";
+  if (/\.jsx$/.test(filePath)) return "javascriptreact";
+  if (/\.(js|mjs|cjs)$/.test(filePath)) return "javascript";
+  if (/\.py$/.test(filePath)) return "python";
+  if (/\.go$/.test(filePath)) return "go";
+  if (/\.(cpp|cc|cxx|hpp|hxx)$/.test(filePath)) return "cpp";
+  if (/\.(c|h)$/.test(filePath)) return "c";
+  if (/\.m$/.test(filePath)) return "objective-c";
+  if (/\.mm$/.test(filePath)) return "objective-cpp";
+  if (/\.css$/.test(filePath)) return "css";
+  if (/\.scss$/.test(filePath)) return "scss";
+  if (/\.less$/.test(filePath)) return "less";
+  if (/\.html?$/.test(filePath)) return "html";
+  if (/\.jsonc$/.test(filePath)) return "jsonc";
+  if (/\.json$/.test(filePath)) return "json";
+  if (/\.svelte$/.test(filePath)) return "svelte";
+  if (/\.vue$/.test(filePath)) return "vue";
+  if (/\.astro$/.test(filePath)) return "astro";
+  if (/\.(graphql|gql)$/.test(filePath)) return "graphql";
+  if (/\.lua$/.test(filePath)) return "lua";
+  return "plaintext";
+}
 
 /**
  * Minimal LSP client over stdio JSON-RPC.
@@ -68,7 +93,7 @@ export class LspClient {
       cwd: this.workspaceRoot,
     });
 
-    this.process.stdout!.on("data", (chunk: Buffer) => {
+    this.process.stdout?.on("data", (chunk: Buffer) => {
       this.handleData(chunk.toString());
     });
 
@@ -97,9 +122,7 @@ export class LspClient {
         },
       },
       rootUri: `file://${this.workspaceRoot}`,
-      workspaceFolders: [
-        { uri: `file://${this.workspaceRoot}`, name: "root" },
-      ],
+      workspaceFolders: [{ uri: `file://${this.workspaceRoot}`, name: "root" }],
       initializationOptions: this.config.initializationOptions ?? {},
     })) as { capabilities?: { diagnosticProvider?: unknown } } | undefined;
 
@@ -123,10 +146,7 @@ export class LspClient {
   /**
    * Open a file and wait for diagnostics to arrive.
    */
-  async openFileAndGetDiagnostics(
-    filePath: string,
-    timeoutMs = 10000,
-  ): Promise<Diagnostic[]> {
+  async openFileAndGetDiagnostics(filePath: string, timeoutMs = 10000): Promise<Diagnostic[]> {
     if (!this.initialized || !this.process) return [];
 
     const absPath = resolve(filePath);
@@ -141,7 +161,7 @@ export class LspClient {
         return [];
       }
 
-      const languageId = this.getLanguageId(absPath);
+      const languageId = getLanguageId(absPath);
       this.notify("textDocument/didOpen", {
         textDocument: {
           uri,
@@ -301,9 +321,10 @@ export class LspClient {
 
   private handleMessage(msg: JsonRpcMessage): void {
     // Response to a request
-    if (msg.id !== undefined && this.pending.has(msg.id as number)) {
-      const handler = this.pending.get(msg.id as number)!;
-      this.pending.delete(msg.id as number);
+    if (msg.id !== undefined) {
+      const handler = this.pending.get(msg.id);
+      if (!handler) return;
+      this.pending.delete(msg.id);
       if (msg.error) {
         handler.reject(new Error(msg.error.message));
       } else {
@@ -329,25 +350,12 @@ export class LspClient {
       }
     }
   }
-
-  private getLanguageId(filePath: string): string {
-    if (/\.tsx?$/.test(filePath)) return "typescript";
-    if (/\.jsx?$/.test(filePath)) return "javascript";
-    if (/\.mts$/.test(filePath)) return "typescript";
-    if (/\.cts$/.test(filePath)) return "typescript";
-    if (/\.mjs$/.test(filePath)) return "javascript";
-    if (/\.cjs$/.test(filePath)) return "javascript";
-    return "plaintext";
-  }
 }
 
 /**
  * Format diagnostics into a concise string for the LLM.
  */
-export function formatDiagnostics(
-  filePath: string,
-  diagnostics: Diagnostic[],
-): string {
+export function formatDiagnostics(diagnostics: Diagnostic[]): string {
   if (diagnostics.length === 0) return "";
 
   const lines = diagnostics.map((d) => {

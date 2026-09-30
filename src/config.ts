@@ -37,8 +37,7 @@ export const LSP_CONFIGS: LspServerConfig[] = [
     command: "typescript-language-server",
     args: ["--stdio"],
     filePatterns: [/\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/],
-    condition: (root) =>
-      hasMarker(root, "tsconfig.json", "jsconfig.json", "package.json"),
+    condition: (root) => hasMarker(root, "tsconfig.json", "jsconfig.json", "package.json"),
     initializationOptions: { hostInfo: "pi" },
   },
 

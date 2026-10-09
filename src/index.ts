@@ -59,10 +59,25 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
   const startingClients = new Map<string, Promise<LspClient | null>>();
   // Cache: workspace root → condition result (avoid re-checking fs)
   const conditionCache = new Map<string, boolean>();
-  // UI context reference for status updates
-  let uiCtx: { setStatus: (id: string, text: string | undefined) => void } | null = null;
+  // UI context reference for status / soft notifications.
+  // Never use console.* here: writing to stderr paints into Pi's editor until redraw.
+  let uiCtx: {
+    setStatus: (id: string, text: string | undefined) => void;
+    notify: (message: string, level?: "info" | "warning" | "error") => void;
+  } | null = null;
 
   const STATUS_MAX_LEN = 25;
+  const reported = new Set<string>();
+
+  function reportOnce(
+    key: string,
+    message: string,
+    level: "info" | "warning" | "error" = "warning",
+  ) {
+    if (reported.has(key)) return;
+    reported.add(key);
+    uiCtx?.notify(message, level);
+  }
 
   function updateStatus() {
     if (!uiCtx) return;
@@ -87,6 +102,7 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     uiCtx = ctx.ui;
+    reported.clear();
     updateStatus();
   });
 
@@ -187,7 +203,9 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
     if (startingClient) return startingClient;
 
     const startPromise = (async (): Promise<LspClient | null> => {
-      const client = new LspClient(config, workspaceRoot);
+      const client = new LspClient(config, workspaceRoot, (message) => {
+        reportOnce(`${config.name}:runtime`, `LSP ${message}`);
+      });
       try {
         await client.start();
         clients.set(key, client);
@@ -195,7 +213,8 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
         updateStatus();
         return client;
       } catch (err) {
-        console.error(`[lsp-diagnostics] Failed to start ${config.name}:`, (err as Error).message);
+        const detail = err instanceof Error ? err.message : String(err);
+        reportOnce(`${config.name}:start`, `LSP failed to start ${config.name}: ${detail}`);
         conditionCache.set(key, false);
         return null;
       } finally {
@@ -237,10 +256,10 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
       if (result.status === "fulfilled") {
         allDiagnostics.push(...result.value);
       } else {
-        console.error(
-          "[lsp-diagnostics] Error getting diagnostics:",
-          result.reason instanceof Error ? result.reason.message : String(result.reason),
-        );
+        const detail =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        // Soft notify once — do not console.error into the TUI editor.
+        reportOnce("diagnostics-fetch", `LSP diagnostics error: ${detail}`);
       }
     }
 
@@ -345,6 +364,7 @@ export default function lspDiagnostics(pi: ExtensionAPI) {
     clientNames.clear();
     conditionCache.clear();
     startingClients.clear();
+    reported.clear();
     updateStatus();
   });
 }

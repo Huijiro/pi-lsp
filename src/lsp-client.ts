@@ -65,6 +65,8 @@ export function getLanguageId(filePath: string): string {
  *   3. query diagnostics for opened files
  *   4. shutdown + exit on dispose
  */
+export type LspClientLogger = (message: string) => void;
+
 export class LspClient {
   private process: ChildProcess | null = null;
   private requestId = 0;
@@ -81,11 +83,19 @@ export class LspClient {
     { resolve: () => void; timer: ReturnType<typeof setTimeout> }
   >();
   private supportsPullDiagnostics = false;
+  /** Bounded stderr tail for debugging; never written to the TUI console. */
+  private stderrTail = "";
 
   constructor(
     private config: LspServerConfig,
     private workspaceRoot: string,
+    private log: LspClientLogger = () => {},
   ) {}
+
+  /** Last ~4KB of LSP server stderr, if any. */
+  lastStderr(): string {
+    return this.stderrTail;
+  }
 
   async start(): Promise<void> {
     this.process = spawn(this.config.command, this.config.args, {
@@ -97,13 +107,19 @@ export class LspClient {
       this.handleData(chunk.toString());
     });
 
+    // Drain stderr so the pipe never fills. Do not print it — console output
+    // from extensions corrupts Pi's TUI editor until the next redraw.
+    this.process.stderr?.on("data", (chunk: Buffer) => {
+      this.stderrTail = (this.stderrTail + chunk.toString()).slice(-4000);
+    });
+
     this.process.on("error", (err) => {
-      console.error(`[lsp-diagnostics] ${this.config.name} process error:`, err.message);
+      this.log(`${this.config.name} process error: ${err.message}`);
     });
 
     this.process.on("exit", (code) => {
       if (code !== 0 && code !== null) {
-        console.error(`[lsp-diagnostics] ${this.config.name} exited with code ${code}`);
+        this.log(`${this.config.name} exited with code ${code}`);
       }
       this.process = null;
     });
